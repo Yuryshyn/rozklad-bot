@@ -1,13 +1,13 @@
 // Файл: sniper.js
 
-const MY_CHAT_ID = '1434340176'; // Можна дізнатися через @userinfobot
+const MY_CHAT_ID = '1434340176';
 const RAW_API_URL = 'https://portal-market.com/api/nfts/search?offset=0&limit=50&collection_ids=e6c83d75-726c-4165-8547-4d7766e3f210,b0fcb92a-0e46-46a3-8c60-ce226880632f,6a36ffb9-cb5f-43bc-af63-97ec22390bc4&max_price=6&sort_by=price%20asc&status=listed&exclude_bundled=true&premarket_status=all';
 let AUTH_HEADER = 'tma query_id=AAFQS35VAAAAAFBLflVIRaaA&user=%7B%22id%22%3A1434340176%2C%22first_name%22%3A%22%D0%94%D0%B0%D0%BD%D1%8F%22%2C%22last_name%22%3A%22%22%2C%22username%22%3A%22Den4ikkss%22%2C%22language_code%22%3A%22uk%22%2C%22allows_write_to_pm%22%3Atrue%2C%22photo_url%22%3A%22https%3A%5C%2F%5C%2Ft.me%5C%2Fi%5C%2Fuserpic%5C%2F320%5C%2FnM1c52TIq6rmMdiPwVGptgOWhm9IZfPS1YU8UhhV9Tc.svg%22%7D&auth_date=1794909499&signature=1tkx9f32RqjtFpHWWQr9k5wBopFZqkk_9_JDv9sPaHgVEi_km6i2mmxHcbg2kJlpwFJTymzfBlJEs6VctljNCQ&hash=68986574f7757349ab95125b3757a16be082b64508850e98795e1f73b897727e';
 
 const MIN_PROFIT_TON = 0.35;      // Мінімальна чиста вигода (у GRAM/TON)
 const MAX_PRICE_TON = 5.5;        // Максимальна ціна лота (твій баланс)
-const MARKET_FEE = 0.05;         // Комісія маркету при продажу (5%)
-const MAX_AGE_SECONDS = 300;     // Ловити тільки лоти, виставлені не більше 5 хв тому
+const MARKET_FEE = 0.05;          // Комісія маркету при продажу (5%)
+const MAX_AGE_SECONDS = 300;      // Ловити тільки лоти, виставлені не більше 5 хв тому
 const GOOD_BACKDROPS = ['Black', 'Onyx', 'Gold', 'Amber', 'Pure Gold', 'Cyberpunk', 'Coral Red'];
 
 // Автоматично змінюємо сортування на "найсвіжіші лоти" (listed_at desc)
@@ -22,7 +22,7 @@ const API_URL = (() => {
 })();
 
 const seenListings = new Set();
-let isFirstRun = true;           // Щоб при запуску не заспамити старими лотами
+let isFirstRun = true;            // Щоб при запуску не заспамити старими лотами
 let isScannerActive = true;
 
 function isNiceNumber(num) {
@@ -76,11 +76,6 @@ async function scanMarket(bot) {
       if (seenListings.has(item.id)) continue;
       seenListings.add(item.id);
 
-    const price = Number(item.price);
-      if (price > MAX_PRICE_TON) continue; // Ігноруємо лоти дорожчі за наш баланс
-      const floor = Number(item.floor_price);
-      const giftNum = item.external_collection_number;
-
       // Перевіряємо, чи лот справді свіжий (за полем listed_at з API)
       if (item.listed_at) {
         const listedTime = new Date(item.listed_at).getTime();
@@ -89,6 +84,8 @@ async function scanMarket(bot) {
       }
 
       const price = Number(item.price);
+      if (price > MAX_PRICE_TON) continue; // Ігноруємо лоти дорожчі за наш баланс
+
       const floor = Number(item.floor_price);
       const giftNum = item.external_collection_number;
 
@@ -103,7 +100,7 @@ async function scanMarket(bot) {
       const netSellPrice = floor * (1 - MARKET_FEE);
       const estimatedProfit = netSellPrice - price;
 
-      // Умова вигоди: чистий плюс >= 1.0 GRAM АБО (крутий фон / красивий номер не дорожче флору)
+      // Умова вигоди: чистий плюс >= MIN_PROFIT_TON АБО (крутий фон / красивий номер не дорожче флору)
       if (estimatedProfit >= MIN_PROFIT_TON || ((isGoodBackdrop || niceTag) && price <= floor)) {
         const secondsAgo = item.listed_at
           ? Math.max(1, Math.round((now - new Date(item.listed_at).getTime()) / 1000))
@@ -140,7 +137,7 @@ function startScanner(bot) {
   bot.onText(/\/sniper/, (msg) => {
     if (String(msg.chat.id) !== String(MY_CHAT_ID)) return;
     isScannerActive = !isScannerActive;
-    if (isScannerActive) isFirstRun = true; // При повторному ввімкненні знову тихо оновлюємо базу
+    if (isScannerActive) isFirstRun = true;
     bot.sendMessage(MY_CHAT_ID, isScannerActive ? '🟢 Сканер свіжих лотів увімкнено' : '🔴 Сканер на паузі');
   });
 
@@ -152,7 +149,7 @@ function startScanner(bot) {
     bot.sendMessage(MY_CHAT_ID, '✅ Токен оновлено, чекаю свіжі вигідні лоти!');
   });
 
-  setInterval(() => scanMarket(bot), 2500); // Перевірка кожні 2.5 секунди
+  setInterval(() => scanMarket(bot), 2500);
   console.log('[Sniper] Сканер свіжих угод запущено.');
 }
 
