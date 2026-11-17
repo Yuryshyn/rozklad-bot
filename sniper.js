@@ -4,31 +4,35 @@ const MY_CHAT_ID = '1434340176';
 const RAW_API_URL = 'https://portal-market.com/api/nfts/search?offset=0&limit=50&max_price=6&sort_by=listed_at%20desc&status=listed&exclude_bundled=true&premarket_status=all';
 let AUTH_HEADER = 'tma query_id=AAFQS35VAAAAAFBLflVIRaaA&user=%7B%22id%22%3A1434340176%2C%22first_name%22%3A%22%D0%94%D0%B0%D0%BD%D1%8F%22%2C%22last_name%22%3A%22%22%2C%22username%22%3A%22Den4ikkss%22%2C%22language_code%22%3A%22uk%22%2C%22allows_write_to_pm%22%3Atrue%2C%22photo_url%22%3A%22https%3A%5C%2F%5C%2Ft.me%5C%2Fi%5C%2Fuserpic%5C%2F320%5C%2FnM1c52TIq6rmMdiPwVGptgOWhm9IZfPS1YU8UhhV9Tc.svg%22%7D&auth_date=1794909499&signature=1tkx9f32RqjtFpHWWQr9k5wBopFZqkk_9_JDv9sPaHgVEi_km6i2mmxHcbg2kJlpwFJTymzfBlJEs6VctljNCQ&hash=68986574f7757349ab95125b3757a16be082b64508850e98795e1f73b897727e';
 
-const MIN_PROFIT_TON = 0.25;         // Мінімальна чиста вигода (у GRAM/TON)
+const MIN_PROFIT_TON = 0.20;         // Знизили поріг чистої вигоди до 0.25 TON, щоб бачити більше угод
 const MAX_PRICE_TON = 5.5;           // Максимальна ціна лота (твій баланс)
 const MARKET_FEE = 0.05;             // Комісія маркету при продажу (5%)
 const MAX_AGE_SECONDS = 300;         // Ловити тільки лоти, виставлені не більше 5 хв тому
-const AUTO_DELETE_LOT_MS = 10 * 60 * 1000; // Автовидалення старих угод з чату через 10 хв (0 = вимкнено)
+const AUTO_DELETE_LOT_MS = 10 * 60 * 1000;
 const GOOD_BACKDROPS = ['Black', 'Onyx', 'Gold', 'Amber', 'Pure Gold', 'Cyberpunk', 'Coral Red'];
 
 const API_URL = RAW_API_URL;
 
 const seenListings = new Set();
-const sentDealMessageIds = new Set(); // Зберігаємо ID повідомлень з угодами для /clear
+const sentDealMessageIds = new Set();
 let isFirstRun = true;
 let isScannerActive = true;
-let lastErrorStatus = null;
+
+// Статистика для швидкої діагностики через /status
+const stats = {
+  scansCount: 0,
+  lastHttpStatus: 'ще не було запиту',
+  lastScanTime: '—',
+  newItemsSeen: 0,
+  lastCheckedGift: 'поки немає свіжих лотів'
+};
 
 const REQUEST_HEADERS = () => ({
   'Authorization': AUTH_HEADER,
-  'Accept': 'application/json, text/plain, */*',
-  'Origin': 'https://portal-market.com',
-  'Referer': 'https://portal-market.com/',
-  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36'
+  'Accept': 'application/json'
 });
 
-// Надсилає тимчасове сервісне сповіщення, яке саме зникає за 4 секунди
-async function sendTempStatus(bot, chatId, text, delayMs = 4000) {
+async function sendTempStatus(bot, chatId, text, delayMs = 5000) {
   try {
     const sent = await bot.sendMessage(chatId, text, { parse_mode: 'HTML' });
     setTimeout(() => {
@@ -47,7 +51,6 @@ function isNiceNumber(num) {
   return null;
 }
 
-// Дізнаємося найнижчу ціну на маркеті для такої ж моделі в цій колекції
 async function getSameModelFloor(item, model) {
   try {
     const url = new URL('https://portal-market.com/api/nfts/search');
@@ -63,7 +66,6 @@ async function getSameModelFloor(item, model) {
     } else if (item.name) {
       url.searchParams.set('search', item.name);
     }
-
     if (model) {
       url.searchParams.set('models', model);
     }
@@ -85,7 +87,11 @@ async function scanMarket(bot) {
   if (!isScannerActive) return;
 
   try {
+    stats.scansCount++;
+    stats.lastScanTime = new Date().toLocaleTimeString('uk-UA', { timeZone: 'Europe/Kyiv' });
+
     const res = await fetch(API_URL, { headers: REQUEST_HEADERS() });
+    stats.lastHttpStatus = `${res.status} ${res.statusText}`;
 
     if (res.status === 401) {
       console.error('[Sniper] Токен авторизації протух!');
@@ -98,15 +104,8 @@ async function scanMarket(bot) {
       return;
     }
 
-    if (!res.ok) {
-      if (lastErrorStatus !== res.status) {
-        lastErrorStatus = res.status;
-        console.error(`[Sniper] API повернув статус ${res.status}`);
-      }
-      return;
-    }
+    if (!res.ok) return;
 
-    lastErrorStatus = null;
     const data = await res.json();
     const items = data.results || [];
 
@@ -122,6 +121,7 @@ async function scanMarket(bot) {
     for (const item of items) {
       if (seenListings.has(item.id)) continue;
       seenListings.add(item.id);
+      stats.newItemsSeen++;
 
       if (item.listed_at) {
         const listedTime = new Date(item.listed_at).getTime();
@@ -130,11 +130,15 @@ async function scanMarket(bot) {
       }
 
       const price = Number(item.price);
+      const floor = Number(item.floor_price);
+      const netSellPrice = floor * (1 - MARKET_FEE);
+      const estimatedProfit = netSellPrice - price;
+
+      stats.lastCheckedGift = `${item.name} #${item.external_collection_number} | ціна: ${price}, флор: ${floor}, профіт: ${estimatedProfit.toFixed(2)}`;
+
       if (price > MAX_PRICE_TON) continue;
 
-      const floor = Number(item.floor_price);
       const giftNum = item.external_collection_number;
-
       const backdropAttr = item.attributes?.find(a => a.type === 'backdrop');
       const modelAttr = item.attributes?.find(a => a.type === 'model');
       const backdrop = backdropAttr ? backdropAttr.value : 'Невідомо';
@@ -143,10 +147,8 @@ async function scanMarket(bot) {
       const niceTag = isNiceNumber(giftNum);
       const isGoodBackdrop = GOOD_BACKDROPS.some(b => backdrop.toLowerCase().includes(b.toLowerCase()));
 
-      const netSellPrice = floor * (1 - MARKET_FEE);
-      const estimatedProfit = netSellPrice - price;
-
-      if (estimatedProfit >= MIN_PROFIT_TON || ((isGoodBackdrop || niceTag) && estimatedProfit >= 0)) {
+      // Ловимо або чистий профіт >= MIN_PROFIT_TON, або крутий фон/номер по ціні флору і нижче
+      if (estimatedProfit >= MIN_PROFIT_TON || ((isGoodBackdrop || niceTag) && price <= floor)) {
         const sameModelMin = await getSameModelFloor(item, model);
 
         const secondsAgo = item.listed_at
@@ -203,8 +205,6 @@ async function scanMarket(bot) {
 
         if (sentMsg) {
           sentDealMessageIds.add(sentMsg.message_id);
-
-          // Автоматично прибираємо неактуальний лот через 10 хвилин
           if (AUTO_DELETE_LOT_MS > 0) {
             setTimeout(() => {
               bot.deleteMessage(MY_CHAT_ID, sentMsg.message_id).catch(() => {});
@@ -220,12 +220,12 @@ async function scanMarket(bot) {
       seenListings.delete(firstKey);
     }
   } catch (err) {
+    stats.lastHttpStatus = `Помилка: ${err.message}`;
     console.error('[Sniper] Помилка:', err.message);
   }
 }
 
 function startScanner(bot) {
-  // Натискання кнопки "❌ Видалити" під конкретною угодою
   bot.on('callback_query', async (query) => {
     if (query.data === 'del_lot' && query.message) {
       const chatId = query.message.chat.id;
@@ -236,7 +236,20 @@ function startScanner(bot) {
     }
   });
 
-  // Вмикання / пауза сканера без засмічення чату
+  // Команда /status — миттєва перевірка пульсу сканера (зникає через 10 сек)
+  bot.onText(/\/status/, async (msg) => {
+    if (String(msg.chat.id) !== String(MY_CHAT_ID)) return;
+    bot.deleteMessage(MY_CHAT_ID, msg.message_id).catch(() => {});
+    const report = [
+      `📊 <b>Статус снайпера:</b> ${isScannerActive ? '🟢 Активний' : '🔴 Пауза'}`,
+      `🔄 Перевірок маркету: <b>${stats.scansCount}</b> (остання о ${stats.lastScanTime})`,
+      `🌐 Відповідь Portals API: <b>${stats.lastHttpStatus}</b>`,
+      `👀 Побачено нових лотів: <b>${stats.newItemsSeen}</b>`,
+      `🔎 Останній лот: <code>${stats.lastCheckedGift}</code>`
+    ].join('\n');
+    await sendTempStatus(bot, MY_CHAT_ID, report, 10000);
+  });
+
   bot.onText(/\/sniper/, async (msg) => {
     if (String(msg.chat.id) !== String(MY_CHAT_ID)) return;
     bot.deleteMessage(MY_CHAT_ID, msg.message_id).catch(() => {});
@@ -249,18 +262,15 @@ function startScanner(bot) {
     );
   });
 
-  // Оновлення токена без залишення його в історії чату
   bot.onText(/\/token (.+)/, async (msg, match) => {
     if (String(msg.chat.id) !== String(MY_CHAT_ID)) return;
     bot.deleteMessage(MY_CHAT_ID, msg.message_id).catch(() => {});
     AUTH_HEADER = match[1].trim();
     isFirstRun = true;
     isScannerActive = true;
-    lastErrorStatus = null;
     await sendTempStatus(bot, MY_CHAT_ID, '✅ Токен оновлено, чекаю свіжі вигідні лоти!');
   });
 
-  // Очищення всіх активних угод у чаті однією командою
   bot.onText(/\/clear/, async (msg) => {
     if (String(msg.chat.id) !== String(MY_CHAT_ID)) return;
     bot.deleteMessage(MY_CHAT_ID, msg.message_id).catch(() => {});
