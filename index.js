@@ -7,7 +7,7 @@ app.get('/', (req, res) => res.send('Бот працює!'));
 app.listen(process.env.PORT || 3000, () => console.log('Сервер запущено'));
 
 // Твій бот
-const token = '9001815014:AAGhkTPxjFrOS_8RJ_IlRqG_F323V9AjJO0';
+const token = 'process.env.BOT_TOKEN';
 const bot = new TelegramBot(token, {polling: true});
 
 const schedule = {
