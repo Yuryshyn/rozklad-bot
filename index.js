@@ -7,7 +7,7 @@ app.get('/', (req, res) => res.send('Бот працює!'));
 app.listen(process.env.PORT || 3000, () => console.log('Сервер запущено'));
 
 // Твій бот
-const token = '9001815014:AAGhkTPxjFrOS_8RJ_IlRqG_F323V9AjJO0'; 
+const token = '9001815014:AAGhkTPxjFrOS_8RJ_IlRqG_F323V9AjJO0';
 const bot = new TelegramBot(token, {polling: true});
 
 const schedule = {
@@ -17,9 +17,9 @@ const schedule = {
 
   'wed': `📚 *Середа:*\n\n2. Математичне програмування (лекція)\nВикладач: ст.викл. Шумило Н.Я.\n[Посилання на Meet](https://meet.google.com/epg-jogu-eqw)\n\n3-4. Математичне програмування (практ)\nВикладач: асист. Петрушин А.Є.\n[Посилання на Meet](https://meet.google.com/epg-jogu-eqw)`,
 
-  'thu': `📚 *Четвер:*\n\n1. Історії успіху відомих компаній, брендів і людей (лекція)\nВикладач: доц. Шніцер І.О.\n[Посилання на Meet](https://meet.google.com/gfg-bojk-pyg)\n\n2. Хмарні технології та сервіси (лекція)\nВикладач: доц. Яворський П.В.\n[Посилання на Meet](https://meet.google.com/mzw-eyoy-kvv)\n\n3. Хмарні (лаб 1) / Проектування БД (лаб 2)\nВикладачі: доц. Яворський П.В., ст.викл. Ребляни А.М.\n[Хмарні (Meet)](https://meet.google.com/mzw-eyoy-kvv) | [БД (Meet)](http://meet.google.com/gtz-oshc-tgq)\n\n4. Хмарні (лаб 2) / Проектування БД (лаб 1)\nВикладачі: доц. Яворський П.В., ст.викл. Ребляни А.М.\n[Посилання на Meet](http://meet.google.com/gtz-oshc-tgq)`,
+  'thu': `📚 *Четвер:*\n\n1. Історії успіху відомих компаній, брендів і людей (лекція)\nВикладач: доц. Шніцер І.О.\n[Посилання на Meet](https://meet.google.com/gfg-bojk-pyg)\n\n2. Хмарні технології та сервіси (лекція)\nВикладач: доц. Яворський П.В.\n[Посилання на Meet](https://meet.google.com/mzw-eyoy-kvv)\n\n3. Хмарні (лаб 1) / Проектування БД (лаб 2)\nВикладачі: доц. Яворський П.В., ст.викл. Ребляни А.М.\n[Хмарні (Meet)](https://meet.google.com/mzw-eyoy-kvv) | [БД (Meet)](http://meet.google.com/gtz-oshc-tgq)\n\n4. Хмарні (лаб 2) / Проектування БД (лаб 1)\nВикладачі: доц. Яворський П.В., ст.викл. Ребляни А.М.\n[Посилання на Meet](https://meet.google.com/gtz-oshc-tgq)`,
 
-  'fri': `📚 *П'ятниця:*\n\n1. Проектування баз даних і знань (лекція)\nВикладач: проф. Мулеса О.Ю.\n[Посилання на Meet](http://meet.google.com/xeb-zmfx-pin)\n\n2. Історії успіху відомих компаній, брендів і людей (практ)\nВикладач: доц. Скиба І.І.\n[Посилання на Meet](https://meet.google.com/gbd-nuer-ofe?hs=122&authuser=0)\n\n3. Операційні системи (лаб 1 підгр.)\nВикладач: доц. Петрушко І.А.\n[Посилання на Meet](http://meet.google.com/ddj-jeyx-owe)\n\n4. Операційні системи (лаб 2 підгр.)\nВикладач: доц. Петрушко І.А.\n[Посилання на Meet](http://meet.google.com/ddj-jeyx-owe)`
+  'fri': `📚 *П'ятниця:*\n\n1. Проектування баз даних і знань (лекція)\nВикладач: проф. Мулеса О.Ю.\n[Посилання на Meet](https://meet.google.com/xeb-zmfx-pin)\n\n2. Історії успіху відомих компаній, брендів і людей (практ)\nВикладач: доц. Скиба І.І.\n[Посилання на Meet](https://meet.google.com/gbd-nuer-ofe?hs=122&authuser=0)\n\n3. Операційні системи (лаб 1 підгр.)\nВикладач: доц. Петрушко І.А.\n[Посилання на Meet](http://meet.google.com/ddj-jeyx-owe)\n\n4. Операційні системи (лаб 2 підгр.)\nВикладач: доц. Петрушко І.А.\n[Посилання на Meet](http://meet.google.com/ddj-jeyx-owe)`
 };
 
 const getMainMenuMarkup = () => {
@@ -64,3 +64,7 @@ bot.on('callback_query', (query) => {
   }
   bot.answerCallbackQuery(query.id); 
 });
+
+// Підключаємо та запускаємо сканер подарунків Portals
+const { startScanner } = require('./sniper');
+startScanner(bot);
