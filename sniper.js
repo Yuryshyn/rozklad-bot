@@ -4,8 +4,8 @@ const MY_CHAT_ID = '1434340176';
 const RAW_API_URL = 'https://portal-market.com/api/nfts/search?offset=0&limit=50&max_price=6&sort_by=listed_at%20desc&status=listed&exclude_bundled=true&premarket_status=all';
 let AUTH_HEADER = 'tma query_id=AAFQS35VAAAAAFBLflVIRaaA&user=%7B%22id%22%3A1434340176%2C%22first_name%22%3A%22%D0%94%D0%B0%D0%BD%D1%8F%22%2C%22last_name%22%3A%22%22%2C%22username%22%3A%22Den4ikkss%22%2C%22language_code%22%3A%22uk%22%2C%22allows_write_to_pm%22%3Atrue%2C%22photo_url%22%3A%22https%3A%5C%2F%5C%2Ft.me%5C%2Fi%5C%2Fuserpic%5C%2F320%5C%2FnM1c52TIq6rmMdiPwVGptgOWhm9IZfPS1YU8UhhV9Tc.svg%22%7D&auth_date=1794909499&signature=1tkx9f32RqjtFpHWWQr9k5wBopFZqkk_9_JDv9sPaHgVEi_km6i2mmxHcbg2kJlpwFJTymzfBlJEs6VctljNCQ&hash=68986574f7757349ab95125b3757a16be082b64508850e98795e1f73b897727e';
 
-const MIN_PROFIT_TON = 0.06;         // Знизили поріг чистої вигоди до 0.25 TON, щоб бачити більше угод
-const MAX_PRICE_TON = 5.5;           // Максимальна ціна лота (твій баланс)
+const MIN_PROFIT_TON = 0.15;         // Знизили поріг чистої вигоди до 0.25 TON, щоб бачити більше угод
+const MAX_PRICE_TON = 6;           // Максимальна ціна лота (твій баланс)
 const MARKET_FEE = 0.05;             // Комісія маркету при продажу (5%)
 const MAX_AGE_SECONDS = 300;         // Ловити тільки лоти, виставлені не більше 5 хв тому
 const AUTO_DELETE_LOT_MS = 10 * 60 * 1000;
