@@ -1,7 +1,6 @@
 // Файл: sniper.js
 
 const MY_CHAT_ID = '1434340176';
-// Підняли max_price до 11, щоб бачити всі лоти до 10 TON
 const RAW_API_URL = 'https://portal-market.com/api/nfts/search?offset=0&limit=50&max_price=11&sort_by=listed_at%20desc&status=listed&exclude_bundled=true&premarket_status=all';
 let AUTH_HEADER = 'tma query_id=AAFQS35VAAAAAFBLflVIRaaA&user=%7B%22id%22%3A1434340176%2C%22first_name%22%3A%22%D0%94%D0%B0%D0%BD%D1%8F%22%2C%22last_name%22%3A%22%22%2C%22username%22%3A%22Den4ikkss%22%2C%22language_code%22%3A%22uk%22%2C%22allows_write_to_pm%22%3Atrue%2C%22photo_url%22%3A%22https%3A%5C%2F%5C%2Ft.me%5C%2Fi%5C%2Fuserpic%5C%2F320%5C%2FnM1c52TIq6rmMdiPwVGptgOWhm9IZfPS1YU8UhhV9Tc.svg%22%7D&auth_date=1794909499&signature=1tkx9f32RqjtFpHWWQr9k5wBopFZqkk_9_JDv9sPaHgVEi_km6i2mmxHcbg2kJlpwFJTymzfBlJEs6VctljNCQ&hash=68986574f7757349ab95125b3757a16be082b64508850e98795e1f73b897727e';
 
@@ -9,21 +8,33 @@ let AUTH_HEADER = 'tma query_id=AAFQS35VAAAAAFBLflVIRaaA&user=%7B%22id%22%3A1434
 const BASE_MAX_PRICE = 7.0;          // Звичайний робочий бюджет (до 7 TON)
 const VIP_MAX_PRICE = 10.0;          // Максимальний бюджет тільки під дуже круті лоти (7–10 TON)
 
-const BASE_MIN_PROFIT = 0.25;        // Мін. чистий профіт для лотів до 7 TON
+const BASE_MIN_PROFIT = 0.25;        // Мін. чистий профіт для звичайних лотів до 7 TON
 const VIP_MIN_PROFIT = 0.70;         // Мін. чистий профіт для дорогих лотів 7–10 TON
 
 const MARKET_FEE = 0.05;             // Комісія маркету (5%)
 const MAX_AGE_SECONDS = 300;         // Свіжість лота (до 5 хв)
 const AUTO_DELETE_LOT_MS = 10 * 60 * 1000;
 
-// Тільки красиві, темні, неонові та глибокі фони (без жовтих/оранжевих)
+// Топові стильні фони самі по собі (без жовтих/оранжевих)
 const GOOD_BACKDROPS = [
   'Black', 'Onyx', 'Obsidian', 'Midnight', 'Cyberpunk',
   'Dark Purple', 'Emerald', 'Cobalt', 'Sapphire', 'Crimson', 'Neon'
 ];
 
-// Стоп-слова для фонів, які не беремо як "бонус за фон"
+// Стоп-слова для фонів, якщо НЕ збігається з кольором модельки
 const BANNED_BACKDROP_WORDS = ['yellow', 'amber', 'gold', 'orange', 'lemon', 'sand', 'beige', 'mustard'];
+
+// Групи кольорів для пошуку ОДНОТОННИХ подарунків (Модель + Фон одного кольору)
+const COLOR_GROUPS = [
+  { name: 'Чорний монохром', words: ['black', 'onyx', 'obsidian', 'noir', 'shadow', 'dark', 'charcoal', 'coal', 'ebony', 'midnight'] },
+  { name: 'Синій/Блакитний монохром', words: ['blue', 'sapphire', 'cobalt', 'azure', 'sky', 'ocean', 'navy', 'cyan', 'aqua', 'ice', 'frost', 'indigo', 'cornflower', 'electric'] },
+  { name: 'Червоний/Рубін монохром', words: ['red', 'crimson', 'ruby', 'scarlet', 'blood', 'cherry', 'garnet', 'lava', 'flame', 'fire', 'coral'] },
+  { name: 'Зелений/Смарагд монохром', words: ['green', 'emerald', 'mint', 'jade', 'lime', 'forest', 'olive', 'moss', 'leaf', 'cactus', 'shamrock', 'toxic'] },
+  { name: 'Фіолетовий/Неон монохром', words: ['purple', 'violet', 'amethyst', 'lavender', 'grape', 'plum', 'lilac', 'cyberpunk', 'ultraviolet'] },
+  { name: 'Рожевий монохром', words: ['pink', 'rose', 'magenta', 'fuchsia', 'bubblegum', 'flamingo', 'peach', 'sakura', 'blush'] },
+  { name: 'Білий/Срібний монохром', words: ['white', 'silver', 'pearl', 'snow', 'ivory', 'platinum', 'steel', 'chrome', 'grey', 'gray', 'ash', 'cloud'] },
+  { name: 'Золотий/Жовтий монохром', words: ['gold', 'golden', 'yellow', 'amber', 'sun', 'honey', 'lemon', 'champagne', 'bronze', 'copper'] }
+];
 
 const API_URL = RAW_API_URL;
 
@@ -54,78 +65,88 @@ async function sendTempStatus(bot, chatId, text, delayMs = 5000) {
   } catch {}
 }
 
-function isNiceNumber(num) {
-  if (!num) return null;
-  const str = String(num);
-  if (Number(num) <= 100) return 'Перша сотня (#1–100)';
-  if (/^(\d)\1+$/.test(str)) return 'Однакові цифри (#777)';
-  if (str.length >= 3 && str === str.split('').reverse().join('')) return 'Дзеркальний (#1221)';
-  if (/^[1-9]00+$/.test(str)) return 'Кругле число (#1000)';
+// Перевірка на однотонність: чи збігається колір модельки та фону
+function checkColorMatch(model, backdrop) {
+  if (!model || !backdrop) return null;
+  const m = model.toLowerCase();
+  const b = backdrop.toLowerCase();
+
+  for (const group of COLOR_GROUPS) {
+    const modelHasColor = group.words.some(w => m.includes(w));
+    const backdropHasColor = group.words.some(w => b.includes(w));
+    if (modelHasColor && backdropHasColor) {
+      return group.name;
+    }
+  }
   return null;
 }
 
-// Аналіз ліквідності колекції та цін конкурентів
-async function analyzeLiquidityAndMarket(item, model) {
+// Розширена перевірка красивих номерів
+function isNiceNumber(num) {
+  if (!num) return null;
+  const str = String(num);
+  if (Number(num) <= 100) return `Перша сотня (#${num})`;
+  if (/^(\d)\1+$/.test(str)) return `Однакові цифри (#${num})`;
+  if (str.length >= 3 && str === str.split('').reverse().join('')) return `Дзеркальний (#${num})`;
+  if (/^[1-9]00+$/.test(str)) return `Кругле число (#${num})`;
+  if (str.length === 4 && str.slice(0, 2) === str.slice(2, 4)) return `Парний повтор (#${num})`;
+  if ('0123456789'.includes(str) && str.length >= 4) return `Драбинка (#${num})`;
+  if ('9876543210'.includes(str) && str.length >= 4) return `Зворотна драбинка (#${num})`;
+  return null;
+}
+
+// Перевірка ліквідності, мінімального лота колекції та ціни схожого (форма + фон)
+async function analyzeMarketPrices(item, model, backdrop) {
   try {
-    // 1. Перевіряємо загальну активність колекції та ціну 2-го найдешевшого лота в колекції
-    const colUrl = new URL('https://portal-market.com/api/nfts/search');
-    colUrl.searchParams.set('offset', '0');
-    colUrl.searchParams.set('limit', '10');
-    colUrl.searchParams.set('sort_by', 'price asc');
-    colUrl.searchParams.set('status', 'listed');
-    colUrl.searchParams.set('exclude_bundled', 'true');
-    colUrl.searchParams.set('premarket_status', 'all');
+    const baseUrl = new URL('https://portal-market.com/api/nfts/search');
+    baseUrl.searchParams.set('offset', '0');
+    baseUrl.searchParams.set('limit', '10');
+    baseUrl.searchParams.set('sort_by', 'price asc');
+    baseUrl.searchParams.set('status', 'listed');
+    baseUrl.searchParams.set('exclude_bundled', 'true');
+    baseUrl.searchParams.set('premarket_status', 'all');
 
     if (item.collection_id) {
-      colUrl.searchParams.set('collection_ids', item.collection_id);
+      baseUrl.searchParams.set('collection_ids', item.collection_id);
     } else if (item.name) {
-      colUrl.searchParams.set('search', item.name);
+      baseUrl.searchParams.set('search', item.name);
     }
 
-    const colRes = await fetch(colUrl.toString(), { headers: REQUEST_HEADERS() });
+    // 1. Найдешевший лот з цієї колекції та перевірка ліквідності
+    const colRes = await fetch(baseUrl.toString(), { headers: REQUEST_HEADERS() });
     if (!colRes.ok) return null;
 
     const colData = await colRes.json();
     const otherLots = (colData.results || []).filter(x => x.id !== item.id);
     const totalListed = colData.total || colData.count || otherLots.length;
-    const secondFloor = otherLots.length > 0 ? Number(otherLots[0].price) : null;
-
-    // 2. Перевіряємо мінімальну ціну такої ж моделі
-    let sameModelMin = null;
-    if (model) {
-      const modUrl = new URL(colUrl.toString());
-      modUrl.searchParams.set('limit', '3');
-      modUrl.searchParams.set('models', model);
-      const modRes = await fetch(modUrl.toString(), { headers: REQUEST_HEADERS() });
-      if (modRes.ok) {
-        const modData = await modRes.json();
-        const modList = (modData.results || []).filter(x => x.id !== item.id);
-        if (modList.length > 0) sameModelMin = Number(modList[0].price);
-      }
-    }
-
-    // Оцінюємо ліквідність
-    const price = Number(item.price);
-    const realResaleTarget = secondFloor || Number(item.floor_price);
-    const realProfitAfterFee = realResaleTarget * (1 - MARKET_FEE) - price;
-
-    // Якщо на маркеті менше 12 лотів цієї колекції — ринок занадто вузький (неліквід)
     const isLiquid = totalListed >= 12 || otherLots.length >= 8;
 
-    let liquidityLabel = '🟡 Середня';
-    if (totalListed >= 40 && realProfitAfterFee >= 0.25) {
-      liquidityLabel = '🟢 Висока (швидкий фліп)';
-    } else if (!isLiquid) {
-      liquidityLabel = '🔴 Низька (мало лотів на маркеті)';
+    const cheapestCollectionPrice = otherLots.length > 0
+      ? Math.min(Number(item.floor_price), Number(otherLots[0].price))
+      : Number(item.floor_price);
+
+    // 2. Схожий подарунок на маркеті за формою (моделлю) + фоном
+    let similarComboPrice = null;
+    if (model && backdrop && backdrop !== 'Невідомо') {
+      const comboUrl = new URL(baseUrl.toString());
+      comboUrl.searchParams.set('limit', '3');
+      comboUrl.searchParams.set('models', model);
+      comboUrl.searchParams.set('backdrops', backdrop);
+
+      const comboRes = await fetch(comboUrl.toString(), { headers: REQUEST_HEADERS() });
+      if (comboRes.ok) {
+        const comboData = await comboRes.json();
+        const comboList = (comboData.results || []).filter(x => x.id !== item.id);
+        if (comboList.length > 0) {
+          similarComboPrice = Number(comboList[0].price);
+        }
+      }
     }
 
     return {
       isLiquid,
-      liquidityLabel,
-      totalListed,
-      secondFloor,
-      sameModelMin,
-      realProfitAfterFee
+      cheapestCollectionPrice,
+      similarComboPrice
     };
   } catch {
     return null;
@@ -185,7 +206,6 @@ async function scanMarket(bot) {
 
       stats.lastCheckedGift = `${item.name} #${item.external_collection_number} | ${price} GRAM (флор ${floor})`;
 
-      // Відсікаємо все, що дорожче VIP-ліміту (10 TON)
       if (price > VIP_MAX_PRICE) continue;
 
       const giftNum = item.external_collection_number;
@@ -194,55 +214,52 @@ async function scanMarket(bot) {
       const backdrop = backdropAttr ? backdropAttr.value : 'Невідомо';
       const model = modelAttr ? modelAttr.value : '';
 
+      // 1. Однотонність (Модель + Фон одного кольору)
+      const monochromeMatch = checkColorMatch(model, backdrop);
+
+      // 2. Красивий фон сам по собі (без жовтого сміття)
       const backdropLower = backdrop.toLowerCase();
       const isBannedBackdrop = BANNED_BACKDROP_WORDS.some(w => backdropLower.includes(w));
       const isGoodBackdrop = !isBannedBackdrop && GOOD_BACKDROPS.some(b => backdropLower.includes(b.toLowerCase()));
+
+      // 3. Красивий номер
       const niceTag = isNiceNumber(giftNum);
 
-      // Перевірка 1: Звичайний діапазон (до 7 TON)
+      // Звичайний діапазон (до 7 TON)
       const passBaseTier = price <= BASE_MAX_PRICE && (
         estimatedProfit >= BASE_MIN_PROFIT ||
+        (monochromeMatch && price <= floor + 0.25) ||
         ((isGoodBackdrop || niceTag) && price <= floor + 0.15)
       );
 
-      // Перевірка 2: VIP діапазон (від 7.01 до 10 TON) — тільки дуже сильні лоти
+      // VIP діапазон (7.01 – 10 TON)
       const passVipTier = price > BASE_MAX_PRICE && price <= VIP_MAX_PRICE && (
         estimatedProfit >= VIP_MIN_PROFIT ||
-        (isGoodBackdrop && niceTag && price <= floor) ||
+        (monochromeMatch && price <= floor) ||
+        (niceTag && price <= floor) ||
         (isGoodBackdrop && estimatedProfit >= 0.35)
       );
 
       if (passBaseTier || passVipTier) {
-        const marketInfo = await analyzeLiquidityAndMarket(item, model);
+        const marketInfo = await analyzeMarketPrices(item, model, backdrop);
 
-        // Якщо маркет зовсім неліквідний і профіт при цьому не космічний (< 0.8 GRAM) — пропускаємо
+        // Відсікаємо неліквідні колекції, якщо немає надвисокого профіту
         if (marketInfo && !marketInfo.isLiquid && estimatedProfit < 0.8) {
           continue;
         }
 
-        const secondsAgo = item.listed_at
-          ? Math.max(1, Math.round((now - new Date(item.listed_at).getTime()) / 1000))
-          : 'щойно';
+        const minCollectionPrice = marketInfo ? marketInfo.cheapestCollectionPrice : floor;
+        const similarText = marketInfo?.similarComboPrice
+          ? `${marketInfo.similarComboPrice.toFixed(2)} GRAM`
+          : 'немає в продажу';
 
-        const realProfit = marketInfo ? marketInfo.realProfitAfterFee : estimatedProfit;
-        const profitSign = realProfit >= 0 ? '+' : '';
-        const tierBadge = price > BASE_MAX_PRICE ? '💎 <b>VIP-ЛОТ (7–10 TON)</b>' : '⚡ <b>СВІЖИЙ ВИГІДНИЙ ЛОТ</b>';
-
+        // Лаконічний підпис з 4 потрібними пунктами
         const msg = [
-          `${tierBadge} (${secondsAgo} сек. тому)`,
-          ``,
-          `🎁 <b>${item.name} #${giftNum}</b>`,
-          model ? `🎭 Модель: <b>${model}</b>` : null,
-          `🎨 Фон: <b>${backdrop}</b> ${isGoodBackdrop ? '🔥' : ''}`,
-          niceTag ? `🔢 Номер: <b>${niceTag}</b>` : null,
-          marketInfo ? `📊 Ліквідність: <b>${marketInfo.liquidityLabel}</b>` : null,
-          ``,
-          `💰 Ціна лота: <b>${price.toFixed(2)} GRAM</b>`,
-          `📉 Флор колекції: <b>${floor.toFixed(2)} GRAM</b>`,
-          marketInfo?.secondFloor ? `🥈 Наступний лот у колекції: <b>${marketInfo.secondFloor.toFixed(2)} GRAM</b>` : null,
-          marketInfo?.sameModelMin ? `🏷 Мін. ціна такої ж моделі: <b>${marketInfo.sameModelMin.toFixed(2)} GRAM</b>` : null,
-          `📈 Чистий профіт (після 5%): <b>${profitSign}${realProfit.toFixed(2)} GRAM</b>`
-        ].filter(Boolean).join('\n');
+          `🔢 Номер: <b>#${giftNum}</b>${niceTag ? ' 🔥' : ''}`,
+          `💰 Ціна: <b>${price.toFixed(2)} GRAM</b>`,
+          `📉 Найдешевший у колекції: <b>${minCollectionPrice.toFixed(2)} GRAM</b>`,
+          `🎭 Схожий (форма + фон): <b>${similarText}</b>`
+        ].join('\n');
 
         const replyMarkup = {
           inline_keyboard: [[
