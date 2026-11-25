@@ -1,16 +1,17 @@
 // Файл: sniper.js
 
 const MY_CHAT_ID = '1434340176';
-// Підняли max_price до 25, щоб бачити всі свіжі лоти до 24 TON
-const RAW_API_URL = 'https://portal-market.com/api/nfts/search?offset=0&limit=50&max_price=25&sort_by=listed_at%20desc&status=listed&exclude_bundled=true&premarket_status=all';
+// Підняли max_price до 28 під твій поточний баланс
+const RAW_API_URL = 'https://portal-market.com/api/nfts/search?offset=0&limit=50&max_price=28&sort_by=listed_at%20desc&status=listed&exclude_bundled=true&premarket_status=all';
 let AUTH_HEADER = 'tma query_id=AAFQS35VAAAAAFBLflVIRaaA&user=%7B%22id%22%3A1434340176%2C%22first_name%22%3A%22%D0%94%D0%B0%D0%BD%D1%8F%22%2C%22last_name%22%3A%22%22%2C%22username%22%3A%22Den4ikkss%22%2C%22language_code%22%3A%22uk%22%2C%22allows_write_to_pm%22%3Atrue%2C%22photo_url%22%3A%22https%3A%5C%2F%5C%2Ft.me%5C%2Fi%5C%2Fuserpic%5C%2F320%5C%2FnM1c52TIq6rmMdiPwVGptgOWhm9IZfPS1YU8UhhV9Tc.svg%22%7D&auth_date=1794909499&signature=1tkx9f32RqjtFpHWWQr9k5wBopFZqkk_9_JDv9sPaHgVEi_km6i2mmxHcbg2kJlpwFJTymzfBlJEs6VctljNCQ&hash=68986574f7757349ab95125b3757a16be082b64508850e98795e1f73b897727e';
 
-// Налаштування бюджету та прибутку під баланс 28 TON
-const BASE_MAX_PRICE = 18.0;         // Основний робочий бюджет (до 18 TON)
-const VIP_MAX_PRICE = 24.0;          // Максимальний бюджет під топові лоти (18–24 TON, із резервом)
+// Налаштування бюджету та ліквідності під баланс 28 TON
+const BASE_MAX_PRICE = 22.0;         // Основний робочий бюджет (до 20 TON)
+const VIP_MAX_PRICE = 30.0;          // Максимальний бюджет (20–28 TON) під топові чорні фони / доведений профіт
 
-const BASE_MIN_PROFIT = 0.60;        // Мін. чистий профіт для звичайних лотів до 18 TON
-const VIP_MIN_PROFIT = 1.50;         // Мін. чистий профіт для дорогих лотів 18–24 TON
+const BASE_MIN_PROFIT = 0.65;        // Мін. чистий профіт для звичайних лотів
+const VIP_MIN_PROFIT = 1.60;         // Мін. чистий профіт для дорогих лотів (20–28 TON)
+const MIN_24H_SALES = 1000;          // Мінімальний оборот колекції за 24 години (штук/продажів)
 
 const MARKET_FEE = 0.05;             // Комісія маркету (5%)
 const MAX_AGE_SECONDS = 300;         // Свіжість лота (до 5 хв)
@@ -37,6 +38,7 @@ const API_URL = RAW_API_URL;
 
 const seenListings = new Set();
 const sentDealMessageIds = new Set();
+const collection24hCache = new Map(); // Кеш обороту колекцій за 24 години на 5 хвилин
 let isFirstRun = true;
 let isScannerActive = true;
 
@@ -96,7 +98,74 @@ function isNiceNumber(num) {
   return null;
 }
 
-async function analyzeMarketPrices(item, model, backdrop) {
+// Перевірка 24-годинного обороту колекції (мін. 1000 продажів за 24 години)
+async function getCollection24hSales(item) {
+  const colKey = item.collection_id || item.name;
+  if (!colKey) return null;
+
+  const cached = collection24hCache.get(colKey);
+  if (cached && Date.now() - cached.ts < 5 * 60 * 1000) {
+    return cached.sales24h;
+  }
+
+  try {
+    // 1. Пробуємо отримати метрики колекції напряму
+    const colRes = await fetch('https://portal-market.com/api/collections', {
+      headers: REQUEST_HEADERS()
+    });
+    if (colRes.ok) {
+      const colData = await colRes.json();
+      const list = Array.isArray(colData) ? colData : (colData.collections || colData.results || []);
+      const found = list.find(c =>
+        (item.collection_id && String(c.id) === String(item.collection_id)) ||
+        (item.name && c.name && c.name.toLowerCase() === item.name.toLowerCase())
+      );
+
+      if (found) {
+        const sales24h = Number(
+          found.sales_24h ?? found.transactions_24h ?? found.sold_24h ?? found.volume_24h_count ?? NaN
+        );
+        if (!Number.isNaN(sales24h)) {
+          collection24hCache.set(colKey, { sales24h, ts: Date.now() });
+          return sales24h;
+        }
+      }
+    }
+
+    // 2. Фолбек: перевіряємо загальну кількість проданих лотів по колекції через пошук
+    const soldUrl = new URL('https://portal-market.com/api/nfts/search');
+    soldUrl.searchParams.set('offset', '0');
+    soldUrl.searchParams.set('limit', '20');
+    soldUrl.searchParams.set('status', 'sold');
+    if (item.collection_id) {
+      soldUrl.searchParams.set('collection_ids', item.collection_id);
+    } else {
+      soldUrl.searchParams.set('search', item.name);
+    }
+
+    const soldRes = await fetch(soldUrl.toString(), { headers: REQUEST_HEADERS() });
+    if (soldRes.ok) {
+      const soldData = await soldRes.json();
+      const results = soldData.results || [];
+      // Якщо API повертає свіжі продажі з міткою часу, рахуємо інтенсивність
+      const dayAgo = Date.now() - 24 * 60 * 60 * 1000;
+      const recentInBatch = results.filter(r => {
+        const t = new Date(r.sold_at || r.updated_at || 0).getTime();
+        return t >= dayAgo;
+      });
+      // Якщо навіть у першій 20-ці частина продажів старша за 24 години — обороту 1000/добу точно немає
+      if (results.length >= 20 && recentInBatch.length < 20) {
+        collection24hCache.set(colKey, { sales24h: recentInBatch.length, ts: Date.now() });
+        return recentInBatch.length;
+      }
+    }
+  } catch {}
+
+  return null;
+}
+
+// Аналіз стакану, минулих продажів (модель + фон) та анти-накрутка
+async function analyzeMarketAndHistory(item, model, backdrop) {
   try {
     const baseUrl = new URL('https://portal-market.com/api/nfts/search');
     baseUrl.searchParams.set('offset', '0');
@@ -112,18 +181,17 @@ async function analyzeMarketPrices(item, model, backdrop) {
       baseUrl.searchParams.set('search', item.name);
     }
 
+    // 1. Поточний мінімум колекції
     const colRes = await fetch(baseUrl.toString(), { headers: REQUEST_HEADERS() });
     if (!colRes.ok) return null;
 
     const colData = await colRes.json();
     const otherLots = (colData.results || []).filter(x => x.id !== item.id);
-    const totalListed = colData.total || colData.count || otherLots.length;
-    const isLiquid = totalListed >= 12 || otherLots.length >= 8;
-
     const cheapestCollectionPrice = otherLots.length > 0
       ? Math.min(Number(item.floor_price), Number(otherLots[0].price))
       : Number(item.floor_price);
 
+    // 2. Поточний найдешевший лот на маркеті з такою ж моделлю + фоном
     let similarComboPrice = null;
     if (model && backdrop && backdrop !== 'Невідомо') {
       const comboUrl = new URL(baseUrl.toString());
@@ -141,10 +209,64 @@ async function analyzeMarketPrices(item, model, backdrop) {
       }
     }
 
+    // 3. Історія останніх продажів такого ж поєднання (модель + фон) + перевірка на накрутку
+    let lastValidSoldPrice = null;
+    let isWashTraded = false;
+
+    if (model && backdrop && backdrop !== 'Невідомо') {
+      const soldComboUrl = new URL('https://portal-market.com/api/nfts/search');
+      soldComboUrl.searchParams.set('offset', '0');
+      soldComboUrl.searchParams.set('limit', '8');
+      soldComboUrl.searchParams.set('status', 'sold');
+      soldComboUrl.searchParams.set('sort_by', 'updated_at desc');
+      if (item.collection_id) {
+        soldComboUrl.searchParams.set('collection_ids', item.collection_id);
+      } else if (item.name) {
+        soldComboUrl.searchParams.set('search', item.name);
+      }
+      soldComboUrl.searchParams.set('models', model);
+      soldComboUrl.searchParams.set('backdrops', backdrop);
+
+      const soldRes = await fetch(soldComboUrl.toString(), { headers: REQUEST_HEADERS() });
+      if (soldRes.ok) {
+        const soldData = await soldRes.json();
+        const soldList = soldData.results || [];
+
+        if (soldList.length > 0) {
+          const soldPrices = soldList
+            .map(s => Number(s.price || s.last_sale_price))
+            .filter(p => p > 0);
+
+          // Перевірка на накрутку: чи не перепродавали один і той самий номер по колу
+          const soldNumbers = soldList.map(s => s.external_collection_number).filter(Boolean);
+          const uniqueNumbers = new Set(soldNumbers);
+          if (soldNumbers.length >= 4 && uniqueNumbers.size <= 2) {
+            isWashTraded = true;
+          }
+
+          if (soldPrices.length > 0) {
+            const latestSale = soldPrices[0];
+            // Рахуємо медіану останніх продажів, щоб відсіяти фейковий перелив за x3 ціну
+            const sorted = [...soldPrices].sort((a, b) => a - b);
+            const medianSale = sorted[Math.floor(sorted.length / 2)];
+
+            if (latestSale > cheapestCollectionPrice * 2.3 && latestSale > medianSale * 1.6) {
+              // Останній продаж схожий на накрутку — беремо реальну медіану замість нього
+              isWashTraded = true;
+              lastValidSoldPrice = medianSale;
+            } else {
+              lastValidSoldPrice = latestSale;
+            }
+          }
+        }
+      }
+    }
+
     return {
-      isLiquid,
       cheapestCollectionPrice,
-      similarComboPrice
+      similarComboPrice,
+      lastValidSoldPrice,
+      isWashTraded
     };
   } catch {
     return null;
@@ -217,11 +339,11 @@ async function scanMarket(bot) {
       const niceTag = isNiceNumber(giftNum);
 
       // Попередній відбір кандидатів:
-      // 1. Чорний фон не дорожче флору (+ невеликий допуск 0.20, якщо моделька рідкісна)
-      const candidateBlack = hasBlackBg && price <= floor + 0.20;
-      // 2. Однотон (колір модельки = колір фону) не дорожче флору
-      const candidateMonochrome = Boolean(monochromeMatch) && price <= floor;
-      // 3. Просто вигідна ціна від флору або красивий номер по флору
+      // 1. Пріоритет №1: Чорний фон
+      const candidateBlack = hasBlackBg && price <= floor * 1.15;
+      // 2. Пріоритет №2: Однотон (модель + фон одного кольору)
+      const candidateMonochrome = Boolean(monochromeMatch) && price <= floor * 1.05;
+      // 3. Прямий вигідний профіт від флору або красивий номер по флору
       const candidateProfitOrNum =
         (price <= BASE_MAX_PRICE && (estimatedProfit >= BASE_MIN_PROFIT || (niceTag && price <= floor))) ||
         (price > BASE_MAX_PRICE && (estimatedProfit >= VIP_MIN_PROFIT || (niceTag && price < floor)));
@@ -230,25 +352,38 @@ async function scanMarket(bot) {
         continue;
       }
 
-      const marketInfo = await analyzeMarketPrices(item, model, backdrop);
+      // Перевіряємо оборот колекції за 24 години (>= 1000 продажів)
+      const sales24h = await getCollection24hSales(item);
+      if (sales24h !== null && sales24h < MIN_24H_SALES) {
+        continue;
+      }
 
-      // Відсікаємо неліквідні колекції, якщо немає великого прямого профіту
-      if (marketInfo && !marketInfo.isLiquid && estimatedProfit < 1.2) {
+      // Аналізуємо стакан, історію минулих продажів та накрутку
+      const marketInfo = await analyzeMarketAndHistory(item, model, backdrop);
+
+      // Якщо виявлено явну накрутку по цій комбінації, а сам лот дорожчий за базовий флор — пропускаємо
+      if (marketInfo?.isWashTraded && price > floor) {
         continue;
       }
 
       const minCollectionPrice = marketInfo ? marketInfo.cheapestCollectionPrice : floor;
       const similarComboPrice = marketInfo?.similarComboPrice || null;
+      const lastSoldPrice = marketInfo?.lastValidSoldPrice || null;
 
-      // Фінальна перевірка вигідності ціни з урахуванням реального ринку:
+      // Підтвердження вигідності по стакану АБО по минулому реальному продажу:
+      const profitableVsLastSale = lastSoldPrice && (lastSoldPrice * (1 - MARKET_FEE) - price >= 0.60);
+      const profitableVsSimilar = similarComboPrice && (price <= similarComboPrice * 0.90);
+
       const isGoodDealForBlack = hasBlackBg && (
         price <= minCollectionPrice ||
-        (similarComboPrice && price <= similarComboPrice * 0.90)
+        profitableVsLastSale ||
+        profitableVsSimilar
       );
 
       const isGoodDealForMonochrome = Boolean(monochromeMatch) && (
         price < minCollectionPrice ||
-        (similarComboPrice && price <= similarComboPrice * 0.88)
+        profitableVsLastSale ||
+        profitableVsSimilar
       );
 
       const isGoodDirectProfit =
@@ -263,14 +398,19 @@ async function scanMarket(bot) {
         ? `${similarComboPrice.toFixed(2)} GRAM`
         : 'немає в продажу';
 
+      const lastSoldText = lastSoldPrice
+        ? `${lastSoldPrice.toFixed(2)} GRAM${marketInfo?.isWashTraded ? ' (медіана, був розгін)' : ''}`
+        : null;
+
       const badge = hasBlackBg ? ' 🖤' : (niceTag ? ' 🔥' : '');
 
       const msg = [
         `🔢 Номер: <b>#${giftNum}</b>${badge}`,
         `💰 Ціна: <b>${price.toFixed(2)} GRAM</b>`,
         `📉 Найдешевший у колекції: <b>${minCollectionPrice.toFixed(2)} GRAM</b>`,
-        `🎭 Схожий (форма + фон): <b>${similarText}</b>`
-      ].join('\n');
+        `🎭 Схожий (форма + фон): <b>${similarText}</b>`,
+        lastSoldText ? `📜 Минулий продаж: <b>${lastSoldText}</b>` : null
+      ].filter(Boolean).join('\n');
 
       const replyMarkup = {
         inline_keyboard: [[
@@ -342,6 +482,7 @@ function startScanner(bot) {
     const report = [
       `📊 <b>Статус снайпера:</b> ${isScannerActive ? '🟢 Активний' : '🔴 Пауза'}`,
       `💰 Бюджет: до <b>${BASE_MAX_PRICE} TON</b> (VIP: до <b>${VIP_MAX_PRICE} TON</b>)`,
+      `🔥 Мін. оборот колекції: <b>${MIN_24H_SALES}+</b> продажів / 24г`,
       `🔄 Перевірок маркету: <b>${stats.scansCount}</b> (остання о ${stats.lastScanTime})`,
       `🌐 Відповідь Portals API: <b>${stats.lastHttpStatus}</b>`,
       `👀 Побачено нових лотів: <b>${stats.newItemsSeen}</b>`,
