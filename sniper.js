@@ -1,16 +1,17 @@
 // Файл: sniper.js
 
 const MY_CHAT_ID = '1434340176';
-// Ліміт 30 TON під твій баланс
-const RAW_API_URL = 'https://portal-market.com/api/nfts/search?offset=0&limit=50&max_price=30&sort_by=listed_at%20desc&status=listed&exclude_bundled=true&premarket_status=all';
+// Запит до Portals API виключно в діапазоні від 13 до 35 TON
+const RAW_API_URL = 'https://portal-market.com/api/nfts/search?offset=0&limit=50&min_price=13&max_price=35&sort_by=listed_at%20desc&status=listed&exclude_bundled=true&premarket_status=all';
 let AUTH_HEADER = 'tma query_id=AAFQS35VAAAAAFBLflVIRaaA&user=%7B%22id%22%3A1434340176%2C%22first_name%22%3A%22%D0%94%D0%B0%D0%BD%D1%8F%22%2C%22last_name%22%3A%22%22%2C%22username%22%3A%22Den4ikkss%22%2C%22language_code%22%3A%22uk%22%2C%22allows_write_to_pm%22%3Atrue%2C%22photo_url%22%3A%22https%3A%5C%2F%5C%2Ft.me%5C%2Fi%5C%2Fuserpic%5C%2F320%5C%2FnM1c52TIq6rmMdiPwVGptgOWhm9IZfPS1YU8UhhV9Tc.svg%22%7D&auth_date=1794909499&signature=1tkx9f32RqjtFpHWWQr9k5wBopFZqkk_9_JDv9sPaHgVEi_km6i2mmxHcbg2kJlpwFJTymzfBlJEs6VctljNCQ&hash=68986574f7757349ab95125b3757a16be082b64508850e98795e1f73b897727e';
 
-// Налаштування бюджету та ліквідності під баланс 30 TON
-const BASE_MAX_PRICE = 22.0;         // Основний робочий бюджет (до 22 TON)
-const VIP_MAX_PRICE = 30.0;          // Максимальний бюджет (22–30 TON) під топові чорні/сірі фони або доведений профіт
+// Налаштування цінового коридору 13 – 35 TON
+const MIN_PRICE = 13.0;              // Мінімальна ціна лота (13 TON)
+const BASE_MAX_PRICE = 26.0;         // Основний робочий діапазон (13 – 26 TON)
+const VIP_MAX_PRICE = 35.0;          // Верхня межа (26 – 35 TON) під топові чорні/сірі фони або доведений профіт
 
-const BASE_MIN_PROFIT = 0.65;        // Мін. чистий профіт для звичайних лотів
-const VIP_MIN_PROFIT = 1.60;         // Мін. чистий профіт для дорогих лотів (22–30 TON)
+const BASE_MIN_PROFIT = 0.80;        // Мін. чистий профіт для лотів 13 – 26 TON
+const VIP_MIN_PROFIT = 2.00;         // Мін. чистий профіт для дорогих лотів 26 – 35 TON
 const MIN_24H_SALES = 1000;          // Мінімальний оборот колекції за 24 години
 
 const MARKET_FEE = 0.05;             // Комісія маркету (5%)
@@ -360,7 +361,8 @@ async function scanMarket(bot) {
 
       stats.lastCheckedGift = `${item.name} #${item.external_collection_number} | ${price} GRAM (флор ${floor})`;
 
-      if (price > VIP_MAX_PRICE) continue;
+      // Строгий коридор: від 13 до 35 TON
+      if (price < MIN_PRICE || price > VIP_MAX_PRICE) continue;
 
       const giftNum = item.external_collection_number;
       const backdropAttr = item.attributes?.find(a => a.type === 'backdrop');
@@ -405,7 +407,7 @@ async function scanMarket(bot) {
       const lastSoldPrice = marketInfo?.soldHistory?.price || null;
 
       // Підтвердження вигідності по стакану АБО по минулому реальному продажу:
-      const profitableVsLastSale = lastSoldPrice && (lastSoldPrice * (1 - MARKET_FEE) - price >= 0.60);
+      const profitableVsLastSale = lastSoldPrice && (lastSoldPrice * (1 - MARKET_FEE) - price >= 0.80);
       const profitableVsSimilar = similarComboPrice && (price <= similarComboPrice * 0.90);
 
       // Пріоритет 1: Чорний або сірий фон за вигідною ціною
@@ -524,7 +526,7 @@ function startScanner(bot) {
     bot.deleteMessage(MY_CHAT_ID, msg.message_id).catch(() => {});
     const report = [
       `📊 <b>Статус снайпера:</b> ${isScannerActive ? '🟢 Активний' : '🔴 Пауза'}`,
-      `💰 Бюджет: до <b>${BASE_MAX_PRICE} TON</b> (VIP: до <b>${VIP_MAX_PRICE} TON</b>)`,
+      `💰 Діапазон: <b>${MIN_PRICE} – ${BASE_MAX_PRICE} TON</b> (VIP: до <b>${VIP_MAX_PRICE} TON</b>)`,
       `🔥 Мін. оборот колекції: <b>${MIN_24H_SALES}+</b> продажів / 24г`,
       `🔄 Перевірок маркету: <b>${stats.scansCount}</b> (остання о ${stats.lastScanTime})`,
       `🌐 Відповідь Portals API: <b>${stats.lastHttpStatus}</b>`,
